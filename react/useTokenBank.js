@@ -51,12 +51,13 @@ function friendlyError(status, rawText) {
 
 /**
  * @param {string} apiKey - מפתח links_sk_live_...
- * @param {object} [opts] - { model, maxTokens }
+ * @param {object} [opts] - { project, model, maxTokens }
  */
 export function useTokenBank(apiKey, opts = {}) {
   const [loading, setLoading] = useState(false);
   const [error, setError]     = useState(null);
   const [data, setData]       = useState(null);
+  const project   = opts.project   || null;
   const model     = opts.model     || DEFAULT_MODEL;
   const maxTokens = opts.maxTokens || 2000;
   const keyRef = useRef(apiKey);
@@ -81,12 +82,16 @@ export function useTokenBank(apiKey, opts = {}) {
     if (options.toolChoice) body.tool_choice = options.toolChoice;
 
     try {
+      const headers = {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + keyRef.current,
+      };
+      const proj = options.project || project;
+      if (proj) headers['X-Links-Project'] = proj;
+
       const res = await fetch(TOKEN_BANK_URL, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer ' + keyRef.current,
-        },
+        headers,
         body: JSON.stringify(body),
       });
 
@@ -106,7 +111,7 @@ export function useTokenBank(apiKey, opts = {}) {
     } finally {
       setLoading(false);
     }
-  }, [model, maxTokens]);
+  }, [model, maxTokens, project]);
 
   return { send, loading, error, data };
 }

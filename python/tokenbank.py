@@ -56,16 +56,17 @@ class TokenBankError(Exception):
 
 
 class TokenBank:
-    def __init__(self, api_key, model=DEFAULT_MODEL, max_tokens=2000, retries=2):
+    def __init__(self, api_key, project=None, model=DEFAULT_MODEL, max_tokens=2000, retries=2):
         if not api_key or not api_key.startswith("links_sk_"):
             raise ValueError("מפתח Token Bank לא תקין. המפתח צריך להתחיל ב-links_sk_")
         self.api_key = api_key
+        self.project = project
         self.model = model
         self.max_tokens = max_tokens
         self.retries = retries
 
     def chat(self, messages, system=None, tools=None, tool_choice=None,
-             model=None, max_tokens=None):
+             model=None, max_tokens=None, project=None):
         """
         שליחת בקשת chat לבנק.
 
@@ -96,6 +97,10 @@ class TokenBank:
             "Content-Type": "application/json",
             "Authorization": "Bearer " + self.api_key,
         }
+        # תגית פרויקט למעקב מפוצל ביומן הבנק (אופציונלי)
+        proj = project or self.project
+        if proj:
+            headers["X-Links-Project"] = proj
 
         last_err = None
         for attempt in range(self.retries + 1):

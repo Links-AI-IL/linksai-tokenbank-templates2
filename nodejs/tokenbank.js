@@ -54,6 +54,7 @@ class TokenBank {
       throw new Error('מפתח Token Bank לא תקין. המפתח צריך להתחיל ב-links_sk_');
     }
     this.apiKey    = apiKey;
+    this.project   = opts.project   || null;
     this.model     = opts.model     || DEFAULT_MODEL;
     this.maxTokens = opts.maxTokens || 2000;
     this.retries   = opts.retries ?? 2;
@@ -76,12 +77,16 @@ class TokenBank {
     let lastErr;
     for (let attempt = 0; attempt <= this.retries; attempt++) {
       try {
+        const headers = {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer ' + this.apiKey,
+        };
+        const project = options.project || this.project;
+        if (project) headers['X-Links-Project'] = project;
+
         const res = await fetch(TOKEN_BANK_URL, {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + this.apiKey,
-          },
+          headers,
           body: JSON.stringify(body),
         });
 
