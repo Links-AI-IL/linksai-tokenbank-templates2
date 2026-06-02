@@ -110,8 +110,90 @@ class TokenBank {
     throw lastErr;
   }
 
-  /** קישור לדף ההרשמה — לכפתור "קבל מפתח" */
-  static signupUrl() { return TOKEN_BANK_SIGNUP; }
+  /**
+   * שליחת בקשת chat עם streaming — התשובה מגיעה בהדרגה (מילה-מילה).
+   * שימושי לצ'אט ויצירת תוכן ארוך, לחוויית משתמש זורמת.
+   * הערה: כרגע נתמך רק במנוע FORGE.
+   *
+   * @param {Array} messages - מערך הודעות [{ role, content }]
+   * @param {object} callbacks
+   * @param {function(string)} callbacks.onText - נקרא לכל קטע טקסט שמגיע
+   * @param {function(object)} [callbacks.onDone] - נקרא בסוף עם מטא-דאטה (engine, tokens, חיוב, יתרה)
+   * @param {function(Error)}  [callbacks.onError] - נקרא בשגיאה
+   * @param {object} [options] - system / tools / model / maxTokens / project (כמו ב-chat)
+   * @returns {Promise<string>} הטקסט המלא שהצטבר
+   */
+  async chatStream(messages, callbacks = {}, options = {}) {
+    if (!Array.isArray(messages) || messages.length === 0) {
+      throw new Error('messages חייב להיות מערך לא ריק');
+    }
+    const { onText, onDone, onError } = callbacks;
+
+    const body = {
+      model: options.model || this.model,
+      max_tokens: options.maxTokens || this.maxTokens,
+      stream: true,
+      messages,
+    };
+    if (options.system)     body.system      = options.system;
+    if (options.tools)      body.tools       = options.tools;
+    if (options.toolChoice) body.tool_choice = options.toolChoice;
+
+    const headers = {
+      'Content-Type': 'application/json',
+      'Authorization': 'Bearer ' + this.apiKey,
+    };
+    const project = options.project || this.project;
+    if (project) headers['X-Links-Project'] = project;
+
+    let fullText = '';
+    try {
+      const res = await fetch(TOKEN_BANK_URL, {
+        method: 'POST', headers, body: JSON.stringify(body),
+      });
+
+      // שגיאות (אימות/ארנק/בקשה) מגיעות לפני שה-stream מתחיל — כ-JSON
+      const ctype = res.headers.get('content-type') || '';
+      if (!ctype.includes('text/event-stream')) {
+        const errText = await res.text();
+        throw new TokenBankError(res.status, errText);
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop();
+
+        for (const block of blocks) {
+          const { event, data } = _parseSSE(block);
+          if (!data || data === '[DONE]') continue;
+          let parsed;
+          try { parsed = JSON.parse(data); } catch (_) { continue; }
+
+          if (event === 'content_block_delta' && parsed.delta?.type === 'text_delta') {
+            fullText += parsed.delta.text;
+            if (onText) onText(parsed.delta.text);
+          } else if (event === 'links_meta') {
+            if (onDone) onDone(parsed);
+          } else if (event === 'error') {
+            const e = new Error(parsed.message || 'שגיאת streaming');
+            if (onError) onError(e); else throw e;
+          }
+        }
+      }
+      return fullText;
+    } catch (err) {
+      if (onError) { onError(err); return fullText; }
+      throw err;
+    }
+  }
 
   /** רשימת מנועי VEGA הזמינים */
   static models() { return { ...VEGA_MODELS }; }
@@ -150,6 +232,16 @@ class TokenBankError extends Error {
     this.status = status;
     this.apiMessage = apiMsg;
   }
+}
+
+/** פירוק בלוק SSE לאירוע ולנתונים */
+function _parseSSE(block) {
+  let event = 'message', data = '';
+  for (const line of block.split('\n')) {
+    if (line.startsWith('event:')) event = line.slice(6).trim();
+    else if (line.startsWith('data:')) data += line.slice(5).trim();
+  }
+  return { event, data };
 }
 
 // תמיכה גם ב-module וגם ב-global (תוסף/אתר)

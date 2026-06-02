@@ -93,10 +93,51 @@ const { send } = useTokenBank('links_sk_live_...', { project: 'Bonea' });
 ## תכונות שכל התבניות תומכות בהן
 
 - **מעקב לפי פרויקט** (`project`) — תיוג בקשות לפי פרויקט ביומן הבנק
+- **Streaming** (`chatStream` / `chat_stream` / `sendStream`) — תשובה זורמת מילה-מילה (רק FORGE)
 - **הוראת מערכת** (`system`) — הקשר קבוע לשיחה
 - **כלים** (`tools` + `tool_choice`) — tool use מלא, כולל אילוץ כלי
 - **ניסיונות חוזרים** — אוטומטי בשגיאות רשת (לא בשגיאות אימות/ארנק)
 - **שגיאות מתורגמות** — הודעות ברורות בעברית במקום קודי HTTP גולמיים
+
+---
+
+## Streaming — תשובה זורמת
+
+לצ'אט ויצירת תוכן ארוך, השתמש ב-streaming כדי שהתשובה תופיע בהדרגה. נתמך כרגע רק במנוע FORGE. תיוג הפרויקט עובד גם כאן.
+
+```javascript
+// JavaScript / Node.js
+const tb = new TokenBank('links_sk_live_...', { project: 'Bonea' });
+await tb.chatStream(
+  [{ role: 'user', content: 'ספר לי סיפור' }],
+  {
+    onText: (chunk) => { process.stdout.write(chunk); },   // כל קטע שמגיע
+    onDone: (meta) => { console.log('\nחיוב:', meta.ilsCharged, '₪'); },
+    onError: (err) => { console.error(err.message); },
+  }
+);
+```
+
+```python
+# Python
+tb = TokenBank("links_sk_live_...", project="Bonea")
+tb.chat_stream(
+    [{"role": "user", "content": "ספר לי סיפור"}],
+    on_text=lambda t: print(t, end="", flush=True),
+    on_done=lambda meta: print("\nחיוב:", meta["ilsCharged"], "₪"),
+)
+```
+
+```javascript
+// React
+const { sendStream } = useTokenBank('links_sk_live_...', { project: 'Bonea' });
+await sendStream(
+  [{ role: 'user', content: 'ספר לי סיפור' }],
+  { onText: (chunk) => setText(prev => prev + chunk) }
+);
+```
+
+ה-callback `onDone` מקבל את המטא-דאטה הסופי: `engine`, `inputTokens`, `outputTokens`, `ilsCharged`, `walletRemaining`.
 
 ---
 

@@ -119,6 +119,73 @@ class TokenBank:
                     time.sleep(0.5 * (attempt + 1))
         raise last_err
 
+    def chat_stream(self, messages, on_text=None, on_done=None, on_error=None,
+                    system=None, tools=None, tool_choice=None,
+                    model=None, max_tokens=None, project=None):
+        """
+        chat עם streaming — התשובה מגיעה בהדרגה. נתמך כרגע רק ב-FORGE.
+
+        :param on_text: callback(text) — נקרא לכל קטע טקסט שמגיע
+        :param on_done: callback(meta) — נקרא בסוף עם מטא-דאטה (engine, tokens, חיוב, יתרה)
+        :param on_error: callback(err) — נקרא בשגיאה
+        :return: str — הטקסט המלא שהצטבר
+        """
+        if not isinstance(messages, list) or len(messages) == 0:
+            raise ValueError("messages חייב להיות רשימה לא ריקה")
+
+        body = {
+            "model": model or self.model,
+            "max_tokens": max_tokens or self.max_tokens,
+            "stream": True,
+            "messages": messages,
+        }
+        if system:
+            body["system"] = system
+        if tools:
+            body["tools"] = tools
+        if tool_choice:
+            body["tool_choice"] = tool_choice
+
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + self.api_key,
+        }
+        proj = project or self.project
+        if proj:
+            headers["X-Links-Project"] = proj
+
+        full_text = ""
+        try:
+            res = requests.post(TOKEN_BANK_URL, headers=headers, json=body,
+                                stream=True, timeout=120)
+
+            ctype = res.headers.get("content-type", "")
+            if "text/event-stream" not in ctype:
+                raise TokenBankError(res.status_code, res.text)
+
+            event = "message"
+            data = ""
+            for raw in res.iter_lines(decode_unicode=True):
+                if raw is None:
+                    continue
+                if raw == "":  # סוף בלוק אירוע
+                    full_text += _handle_sse(event, data, on_text, on_done, on_error)
+                    event, data = "message", ""
+                    continue
+                if raw.startswith("event:"):
+                    event = raw[6:].strip()
+                elif raw.startswith("data:"):
+                    data += raw[5:].strip()
+            # בלוק אחרון אם נשאר
+            if data:
+                full_text += _handle_sse(event, data, on_text, on_done, on_error)
+            return full_text
+        except Exception as e:
+            if on_error:
+                on_error(e)
+                return full_text
+            raise
+
     @staticmethod
     def signup_url():
         return TOKEN_BANK_SIGNUP
@@ -126,3 +193,30 @@ class TokenBank:
     @staticmethod
     def models():
         return dict(VEGA_MODELS)
+
+
+def _handle_sse(event, data, on_text, on_done, on_error):
+    """מטפל בבלוק SSE בודד; מחזיר טקסט שהתווסף (אם יש)."""
+    if not data or data == "[DONE]":
+        return ""
+    try:
+        parsed = json.loads(data)
+    except (ValueError, TypeError):
+        return ""
+    if event == "content_block_delta":
+        delta = parsed.get("delta") or {}
+        if delta.get("type") == "text_delta":
+            text = delta.get("text", "")
+            if on_text:
+                on_text(text)
+            return text
+    elif event == "links_meta":
+        if on_done:
+            on_done(parsed)
+    elif event == "error":
+        err = RuntimeError(parsed.get("message", "שגיאת streaming"))
+        if on_error:
+            on_error(err)
+        else:
+            raise err
+    return ""
